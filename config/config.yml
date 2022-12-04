@@ -1,0 +1,23 @@
+proxy:
+  host: 0.0.0.0
+  port: 8080
+  readTimeout: 10
+  writeTimeout: 10
+  # caCrt: /home/ns/.mitm/camitm.crt
+  # caKey: /home/ns/.mitm/camitm.key
+  caCrt: certs/caca1.crt
+  caKey: certs/caca1.key
+  commonName: proxy-ca-cert-cn1
+
+repeater:
+  host: 0.0.0.0
+  port: 8000
+  readTimeout: 10
+  writeTimeout: 10
+# db:
+#   host: 0.0.0.0
+#   port: 5432
+#   dbname: proxy
+#   username: user_proxy
+#   password: password
+#   maxConnections: 1000
