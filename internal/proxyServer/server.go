@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
-	"strings"
 	"time"
 
 	"github.com/Natali-Skv/technopark_IS_http_proxy/config"
@@ -18,6 +17,8 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	// "github.com/labstack/echo-contrib/pprof"
 )
+
+var okHeader = []byte("HTTP/1.1 200 OK\r\n\r\n")
 
 type ProxyServer struct {
 	// bd
@@ -98,18 +99,14 @@ func (ps *ProxyServer) proxyHTTPHandler(ctx echo.Context) error {
 }
 
 func (ps *ProxyServer) proxyHTTPSHandler(ctx echo.Context) error {
-	var (
-		err   error
-		sconn *tls.Conn
-		name  = dnsName(ctx.Request().Host)
-	)
+	name, _, _ := net.SplitHostPort(ctx.Request().Host)
 
 	if name == "" {
 		log.Println("cannot determine cert name for " + ctx.Request().Host)
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "no upstream")
 	}
 
-	provisionalCert, err := ps.cert(name)
+	provisionalCert, err := cert.GenCert(ps.CA, name)
 	if err != nil {
 		log.Println("cert", err)
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "no upstream")
@@ -120,6 +117,7 @@ func (ps *ProxyServer) proxyHTTPSHandler(ctx echo.Context) error {
 		*sConfig = *ps.TLSServerConfig
 	}
 	sConfig.Certificates = []tls.Certificate{*provisionalCert}
+	var sconn *tls.Conn
 	sConfig.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		cConfig := new(tls.Config)
 		if ps.TLSClientConfig != nil {
@@ -131,15 +129,33 @@ func (ps *ProxyServer) proxyHTTPSHandler(ctx echo.Context) error {
 			log.Println("dial", ctx.Request().Host, err)
 			return nil, err
 		}
-		return ps.cert(hello.ServerName)
+		return cert.GenCert(ps.CA, hello.ServerName)
 	}
 
-	cconn, err := handshake(ctx.Response().Writer, sConfig)
+	hijackedConn, _, err := ctx.Response().Hijack()
+	if err != nil {
+		log.Printf("hijacking error: %v", err)
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+	defer hijackedConn.Close()
+
+	if _, err = hijackedConn.Write(okHeader); err != nil {
+		log.Printf("writing ok-header error: %v", err)
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+
+	cconn := tls.Server(hijackedConn, sConfig)
+	if cconn == nil {
+		log.Printf("tls-server error: %v", err)
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+	defer cconn.Close()
+
+	err = cconn.Handshake()
 	if err != nil {
 		log.Println("handshake", ctx.Request().Host, err)
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "handshake")
 	}
-	defer cconn.Close()
 
 	if sconn == nil {
 		log.Println("could not determine cert name for " + ctx.Request().Host)
@@ -147,45 +163,6 @@ func (ps *ProxyServer) proxyHTTPSHandler(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "could not determine cert name")
 	}
 	defer sconn.Close()
-
-	// ================mine==========
-	// fmt.Println("\n---NEW---")
-	// fmt.Println(ctx.Request())
-	// defer fmt.Println("---END---")
-
-	// localConn, _, err := ctx.Response().Hijack()
-	// if err != nil {
-	// 	log.Printf("hijacking error: %v", err)
-	// 	return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
-	// }
-	// defer localConn.Close()
-
-	// if _, err = localConn.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n")); err != nil {
-	// 	log.Printf("Connection establishing failed: %v", err)
-	// 	return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
-	// }
-
-	// host := strings.Split(ctx.Request().Host, ":")[0]
-	// tlsConfig, err := generateTLSConfig(ps.CA, host, ctx.Request().URL.Scheme)
-	// if err != nil {
-	// 	log.Printf("error getting cert: %v", err)
-	// 	return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
-	// }
-
-	// tlsLocalConn := tls.Server(localConn, tlsConfig)
-	// defer tlsLocalConn.Close()
-	// err = tlsLocalConn.Handshake()
-	// if err != nil {
-	// 	log.Printf("handshaking failed: %v", err)
-	// 	return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
-	// }
-
-	// remoteConn, err := tls.Dial("tcp", ctx.Request().URL.Host, tlsConfig)
-	// if err != nil {
-	// 	log.Println(err)
-	// 	return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
-	// }
-	// defer remoteConn.Close()
 
 	reader := bufio.NewReader(cconn)
 	request, err := http.ReadRequest(reader)
@@ -225,45 +202,5 @@ func (ps *ProxyServer) proxyHTTPSHandler(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	request.URL.Scheme = "https"
-	hostAndPort := strings.Split(ctx.Request().URL.Host, ":")
-	request.URL.Host = hostAndPort[0]
 	return nil
-}
-
-func dnsName(addr string) string {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return ""
-	}
-	return host
-}
-
-func (ps *ProxyServer) cert(names ...string) (*tls.Certificate, error) {
-	return cert.GenCert(ps.CA, names)
-}
-
-var okHeader = []byte("HTTP/1.1 200 OK\r\n\r\n")
-
-// handshake hijacks w's underlying net.Conn, responds to the CONNECT request
-// and manually performs the TLS handshake. It returns the net.Conn or and
-// error if any.
-func handshake(w http.ResponseWriter, config *tls.Config) (net.Conn, error) {
-	raw, _, err := w.(http.Hijacker).Hijack()
-	if err != nil {
-		http.Error(w, "no upstream", 503)
-		return nil, err
-	}
-	if _, err = raw.Write(okHeader); err != nil {
-		raw.Close()
-		return nil, err
-	}
-	conn := tls.Server(raw, config)
-	err = conn.Handshake()
-	if err != nil {
-		conn.Close()
-		raw.Close()
-		return nil, err
-	}
-	return conn, nil
 }
