@@ -14,6 +14,19 @@ repeater:
   port: 8000
   readTimeout: 10
   writeTimeout: 10
+
+logger:
+  level: debug
+  encoding: json
+  outputPaths: [access_log]
+  errorOutputPaths: [error_log]
+  messageKey: msg
+  timeKey: finished
+  levelKey: lvl
+  namekey: name
+# functionKey = "funclion"
+# stacktraceKey = "stack_trace"
+
 # db:
 #   host: 0.0.0.0
 #   port: 5432

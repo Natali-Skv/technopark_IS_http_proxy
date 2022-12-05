@@ -3,9 +3,7 @@ package proxyserver
 import (
 	"bufio"
 	"crypto/tls"
-	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -15,6 +13,7 @@ import (
 	"github.com/Natali-Skv/technopark_IS_http_proxy/internal/cert"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/pkg/errors"
 	// "github.com/labstack/echo-contrib/pprof"
 )
 
@@ -22,34 +21,26 @@ var okHeader = []byte("HTTP/1.1 200 OK\r\n\r\n")
 
 type ProxyServer struct {
 	// bd
-	// CA specifies the root CA for generating leaf certs for each incoming
-	// TLS request.
 	CA *tls.Certificate
+	// proxy server's tls-config for connecting to client as server
+	ProxyAsServerTLSConfig *tls.Config
 
-	// TLSServerConfig specifies the tls.Config to use when generating leaf
-	// cert using CA.
-	TLSServerConfig *tls.Config
-
-	// TLSClientConfig specifies the tls.Config to use when establishing
-	// an upstream connection for proxying.
-	TLSClientConfig *tls.Config
+	// proxy server's tls-config for connecting to upstream-server as client
+	ProxyAsClientTLSConfig *tls.Config
 }
 
 func NewProxyServer(caCert *tls.Certificate, servConf, clientConf *tls.Config) *ProxyServer {
 	return &ProxyServer{
-		CA:              caCert,
-		TLSServerConfig: servConf,
-		TLSClientConfig: clientConf,
+		CA:                     caCert,
+		ProxyAsServerTLSConfig: servConf,
+		ProxyAsClientTLSConfig: clientConf,
 	}
 }
 
-func (ps *ProxyServer) ListenAndServe(proxyConf *config.ServerConfig) {
+func (ps *ProxyServer) ListenAndServe(proxyConf *config.ServerConfig, mw CommonMiddleware) {
 	e := echo.New()
 	// pprof.Register(e)
-	e.Use(middleware.Recover())
-	e.Use(middleware.Logger())
-
-	e.Use(ps.proxyDefineProtocol)
+	e.Use(middleware.Recover(), mw.RequestIdMiddleware, mw.AccessLogMiddleware, mw.PanicMiddleware, ps.proxyDefineProtocol)
 
 	httpServ := http.Server{
 		Addr:         proxyConf.Addr(),
@@ -64,22 +55,21 @@ func (ps *ProxyServer) ListenAndServe(proxyConf *config.ServerConfig) {
 func (ps *ProxyServer) proxyDefineProtocol(_ echo.HandlerFunc) echo.HandlerFunc {
 	return func(ctx echo.Context) error {
 		if ctx.Request().Method == http.MethodConnect {
-			fmt.Println("HTTPS_HTTPS_HTTPS")
 			return ps.proxyHTTPSHandler(ctx)
 		}
-		fmt.Println("HTTP_HTTP")
 		return ps.proxyHTTPHandler(ctx)
 	}
 }
 
 func (ps *ProxyServer) proxyHTTPHandler(ctx echo.Context) error {
-	defer fmt.Println("---END---\n\n")
-
+	logger := GetLoggerFromCtx(ctx)
+	requestId := GetRequestIdFromCtx(ctx)
 	ctx.Request().Header.Del("Proxy-Connection")
 
 	resp, err := http.DefaultTransport.RoundTrip(ctx.Request())
 	if err != nil {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+		logger.Error(requestId, errors.Wrap(err, "round trip").Error())
+		return echo.NewHTTPError(http.StatusServiceUnavailable, INTERNAL_SERVER_ERR)
 	}
 	defer resp.Body.Close()
 
@@ -91,115 +81,115 @@ func (ps *ProxyServer) proxyHTTPHandler(ctx echo.Context) error {
 
 	ctx.Response().Status = resp.StatusCode
 	if _, err = io.Copy(ctx.Response(), resp.Body); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		logger.Error(requestId, errors.Wrap(err, "copy upstream's response to client").Error())
+		return echo.NewHTTPError(http.StatusInternalServerError, INTERNAL_SERVER_ERR)
 	}
-	fmt.Println(*resp)
 
 	return nil
 }
 
 func (ps *ProxyServer) proxyHTTPSHandler(ctx echo.Context) error {
+	logger := GetLoggerFromCtx(ctx)
+	requestId := GetRequestIdFromCtx(ctx)
 	name, _, _ := net.SplitHostPort(ctx.Request().Host)
 
 	if name == "" {
-		log.Println("cannot determine cert name for " + ctx.Request().Host)
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "no upstream")
+		logger.Warn(requestId, "cannot determine cert name for"+ctx.Request().Host)
+		return echo.NewHTTPError(http.StatusServiceUnavailable, NO_UPSTREAM_ERR)
 	}
 
 	provisionalCert, err := cert.GenCert(ps.CA, name)
 	if err != nil {
-		log.Println("cert", err)
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "no upstream")
+		logger.Error(requestId, errors.Wrap(err, "generating leaf provisional cert").Error())
+		return echo.NewHTTPError(http.StatusInternalServerError, INTERNAL_SERVER_ERR)
 	}
 
-	sConfig := new(tls.Config)
-	if ps.TLSServerConfig != nil {
-		*sConfig = *ps.TLSServerConfig
+	serverConfig := tls.Config{}
+	if ps.ProxyAsServerTLSConfig != nil {
+		serverConfig = *ps.ProxyAsServerTLSConfig
 	}
-	sConfig.Certificates = []tls.Certificate{*provisionalCert}
-	var sconn *tls.Conn
-	sConfig.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-		cConfig := new(tls.Config)
-		if ps.TLSClientConfig != nil {
-			*cConfig = *ps.TLSClientConfig
+	serverConfig.Certificates = []tls.Certificate{*provisionalCert}
+	var connToUpstream *tls.Conn
+	serverConfig.GetCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		clientConfig := tls.Config{}
+		if ps.ProxyAsClientTLSConfig != nil {
+			clientConfig = *ps.ProxyAsClientTLSConfig
 		}
-		cConfig.ServerName = hello.ServerName
-		sconn, err = tls.Dial("tcp", ctx.Request().Host, cConfig)
+		clientConfig.ServerName = hello.ServerName
+		connToUpstream, err = tls.Dial("tcp", ctx.Request().Host, &clientConfig)
 		if err != nil {
-			log.Println("dial", ctx.Request().Host, err)
+			logger.Error(requestId, errors.Wrap(err, "dial error").Error())
 			return nil, err
 		}
 		return cert.GenCert(ps.CA, hello.ServerName)
 	}
 
-	hijackedConn, _, err := ctx.Response().Hijack()
+	hijackedConnToClient, _, err := ctx.Response().Hijack()
 	if err != nil {
-		log.Printf("hijacking error: %v", err)
-		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+		logger.Error(requestId, errors.Wrap(err, "hijacking error:").Error())
+		return nil
 	}
-	defer hijackedConn.Close()
+	defer hijackedConnToClient.Close()
 
-	if _, err = hijackedConn.Write(okHeader); err != nil {
-		log.Printf("writing ok-header error: %v", err)
-		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	if _, err = hijackedConnToClient.Write(okHeader); err != nil {
+		logger.Error(requestId, errors.Wrap(err, "writing ok-header error").Error())
+		return nil
 	}
 
-	cconn := tls.Server(hijackedConn, sConfig)
-	if cconn == nil {
-		log.Printf("tls-server error: %v", err)
-		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	connToClient := tls.Server(hijackedConnToClient, &serverConfig)
+	if connToClient == nil {
+		logger.Error(requestId, errors.Wrap(err, "tls-server error:").Error())
+		return nil
 	}
-	defer cconn.Close()
+	defer connToClient.Close()
 
-	err = cconn.Handshake()
+	err = connToClient.Handshake()
 	if err != nil {
-		log.Println("handshake", ctx.Request().Host, err)
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "handshake")
+		logger.Error(requestId, errors.Wrap(err, "tls-server error:").Error())
+		return nil
 	}
 
-	if sconn == nil {
-		log.Println("could not determine cert name for " + ctx.Request().Host)
-		// TODO тут точно именно в этом ошибка?
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "could not determine cert name")
+	if connToUpstream == nil {
+		logger.Warn(requestId, "connection to upstrean error")
+		return nil
 	}
-	defer sconn.Close()
+	defer connToUpstream.Close()
 
-	reader := bufio.NewReader(cconn)
+	reader := bufio.NewReader(connToClient)
 	request, err := http.ReadRequest(reader)
 	if err != nil {
-		log.Printf("error getting request: %v", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		logger.Error(requestId, errors.Wrap(err, "getting request error").Error())
+		return nil
 	}
 
 	requestByte, err := httputil.DumpRequest(request, true)
-	fmt.Println(string(requestByte))
 	if err != nil {
-		log.Printf("failed to dump request: %v", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		logger.Error(requestId, errors.Wrap(err, "dump request error").Error())
+		return nil
 	}
-	_, err = sconn.Write(requestByte)
+	_, err = connToUpstream.Write(requestByte)
 	if err != nil {
-		log.Printf("failed to write request: %v", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		logger.Error(requestId, errors.Wrap(err, "write request error").Error())
+		return nil
 	}
 
-	serverReader := bufio.NewReader(sconn)
+	serverReader := bufio.NewReader(connToUpstream)
 	response, err := http.ReadResponse(serverReader, request)
 	if err != nil {
-		log.Printf("failed to read response: %v", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		logger.Error(requestId, errors.Wrap(err, "read response error").Error())
+		return nil
 	}
 
 	rawResponse, err := httputil.DumpResponse(response, true)
 	if err != nil {
-		log.Printf("failed to dump response: %v", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		logger.Error(requestId, errors.Wrap(err, "dump response error").Error())
+		return nil
 	}
 
-	_, err = cconn.Write(rawResponse)
+	_, err = connToClient.Write(rawResponse)
 	if err != nil {
-		log.Printf("fail to write response: %v", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		logger.Error(requestId, errors.Wrap(err, "write response error").Error())
+		return nil
 	}
 
 	return nil

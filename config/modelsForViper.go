@@ -23,8 +23,23 @@ type DBConfig struct {
 	MaxConnections int
 }
 
+type LogConfig struct {
+	Level            string
+	Encoding         string
+	OutputPaths      []string
+	ErrorOutputPaths []string
+
+	MessageKey    string
+	TimeKey       string
+	LevelKey      string
+	NameKey       string
+	FunctionKey   string
+	StacktraceKey string
+}
+
 type Config struct {
 	Proxy    ServerConfig
 	Repeater ServerConfig
 	DB       DBConfig
+	Logger   LogConfig
 }
