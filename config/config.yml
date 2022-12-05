@@ -27,10 +27,10 @@ logger:
 # functionKey = "funclion"
 # stacktraceKey = "stack_trace"
 
-# db:
-#   host: 0.0.0.0
-#   port: 5432
-#   dbname: proxy
-#   username: user_proxy
-#   password: password
-#   maxConnections: 1000
+db:
+  host: 0.0.0.0
+  port: 5432
+  dbname: proxy
+  username: user_proxy
+  password: 1111
+  maxConnections: 1000

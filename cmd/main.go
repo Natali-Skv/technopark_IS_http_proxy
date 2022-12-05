@@ -9,6 +9,7 @@ import (
 	"github.com/Natali-Skv/technopark_IS_http_proxy/internal/cert"
 	proxyserver "github.com/Natali-Skv/technopark_IS_http_proxy/internal/proxyServer"
 	"github.com/Natali-Skv/technopark_IS_http_proxy/internal/tools/logger/zaplogger"
+	"github.com/Natali-Skv/technopark_IS_http_proxy/internal/tools/postgresql"
 	"github.com/pkg/errors"
 
 	// postgresTool "github.com/Natali-Skv/technopark_IS_http_proxy/internal/tools/postgresql"
@@ -47,9 +48,17 @@ func main() {
 	}()
 
 	servLogger := servLog.NewServLogger(logger)
+
+	pgxManager, err := postgresql.NewDBConn(&servConf.DB)
+	if err != nil {
+		log.Fatal(errors.Wrap(err, "error creating postgres agent"))
+	}
+	defer pgxManager.Close()
+
+	proxyRepo := proxyserver.NewProxyRepository(pgxManager)
 	comonMw := proxyserver.NewCommonMiddleware(servLogger)
 
-	proxyServ := proxyserver.NewProxyServer(caCert, &tls.Config{MinVersion: tls.VersionTLS12}, nil)
+	proxyServ := proxyserver.NewProxyServer(proxyRepo, caCert, &tls.Config{MinVersion: tls.VersionTLS12}, nil)
 	proxyServ.ListenAndServe(&servConf.Proxy, comonMw)
 
 }

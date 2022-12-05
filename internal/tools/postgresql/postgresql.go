@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx"
 )
 
-func DBConn(dbConf config.DBConfig) (*pgx.ConnPool, error) {
+func NewDBConn(dbConf *config.DBConfig) (*pgx.ConnPool, error) {
 	ConnStr := fmt.Sprintf("user=%s dbname=%s password=%s host=%s port=%s sslmode=disable",
 		dbConf.Username,
 		dbConf.DBName,
