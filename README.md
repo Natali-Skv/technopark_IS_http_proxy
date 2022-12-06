@@ -19,6 +19,10 @@ certs/repeater-proxy-ca.crt: OK
 $ sudo docker build -t proxy .
 $ sudo docker run -d -p 8080:8080 -p 8000:8000 -t proxy
 ```
+## Запуск локально
+``` asm
+$ go run cmd/main.go
+```
 ## Проверка работы прокси-сервера
 ``` asm
 $ curl -i -x 127.0.0.1:8080 https://www.wikipedia.org/
