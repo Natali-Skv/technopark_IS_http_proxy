@@ -3,8 +3,6 @@ proxy:
   port: 8080
   readTimeout: 10
   writeTimeout: 10
-  # caCrt: /home/ns/.mitm/camitm.crt
-  # caKey: /home/ns/.mitm/camitm.key
   caCrt: certs/caca1.crt
   caKey: certs/caca1.key
   commonName: proxy-ca-cert-cn1
@@ -14,6 +12,9 @@ repeater:
   port: 8000
   readTimeout: 10
   writeTimeout: 10
+  caCrt: certs/caca1.crt
+  caKey: certs/caca1.key
+  commonName: proxy-ca-cert-cn1
 
 logger:
   level: debug

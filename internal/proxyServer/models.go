@@ -1,7 +1,6 @@
 package proxyserver
 
 import (
-	"fmt"
 	"net/http"
 )
 
@@ -58,16 +57,11 @@ func FormRequestData(r *http.Request, dump []byte) *Request {
 	req.Cookies = cookies
 
 	postParams := Map{}
-	err := r.ParseForm()
-	if err != nil {
-		fmt.Println(err)
-	}
-
+	_ = r.ParseForm()
 	for key, value := range r.PostForm {
 		postParams[key] = getValue(value)
 	}
 	req.PostParams = postParams
-
 	return req
 }
 func FormResponseData(response *http.Response, body string) *Response {

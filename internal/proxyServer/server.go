@@ -11,8 +11,10 @@ import (
 
 	"github.com/Natali-Skv/technopark_IS_http_proxy/config"
 	"github.com/Natali-Skv/technopark_IS_http_proxy/internal/cert"
+	httperrors "github.com/Natali-Skv/technopark_IS_http_proxy/internal/utils/httpErrors"
+	"github.com/Natali-Skv/technopark_IS_http_proxy/internal/utils/middleware"
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	echomw "github.com/labstack/echo/v4/middleware"
 	"github.com/pkg/errors"
 	// "github.com/labstack/echo-contrib/pprof"
 )
@@ -38,10 +40,10 @@ func NewProxyServer(repo *ProxyRepository, caCert *tls.Certificate, servConf, cl
 	}
 }
 
-func (ps *ProxyServer) ListenAndServe(proxyConf *config.ServerConfig, mw CommonMiddleware) {
+func (ps *ProxyServer) ListenAndServe(proxyConf *config.ServerConfig, mw *middleware.CommonMiddleware) {
 	e := echo.New()
 	// pprof.Register(e)
-	e.Use(middleware.Recover(), mw.RequestIdMiddleware, mw.AccessLogMiddleware, mw.PanicMiddleware, ps.proxyDefineProtocol)
+	e.Use(echomw.Recover(), mw.RequestIdMiddleware, mw.AccessLogMiddleware, mw.PanicMiddleware, ps.proxyDefineProtocol)
 
 	httpServ := http.Server{
 		Addr:         proxyConf.Addr(),
@@ -63,26 +65,28 @@ func (ps *ProxyServer) proxyDefineProtocol(_ echo.HandlerFunc) echo.HandlerFunc 
 }
 
 func (ps *ProxyServer) proxyHTTPHandler(ctx echo.Context) error {
-	logger := GetLoggerFromCtx(ctx)
-	requestId := GetRequestIdFromCtx(ctx)
+	logger := middleware.GetLoggerFromCtx(ctx)
+	requestId := middleware.GetRequestIdFromCtx(ctx)
 	ctx.Request().Header.Del("Proxy-Connection")
 
 	reqDump, err := httputil.DumpRequest(ctx.Request(), true)
 	if err != nil {
 		logger.Error(requestId, errors.Wrap(err, "request dump error").Error())
-		return echo.NewHTTPError(http.StatusServiceUnavailable, INTERNAL_SERVER_ERR)
+		return echo.NewHTTPError(http.StatusServiceUnavailable, httperrors.INTERNAL_SERVER_ERR)
 	}
 
-	repoReqID, err := ps.repo.InsertRequest(FormRequestData(ctx.Request(), reqDump))
+	repoReq := FormRequestData(ctx.Request(), reqDump)
+	repoReq.IsHTTPS = false
+	repoReqID, err := ps.repo.InsertRequest(repoReq)
 	if err != nil {
-		logger.Error(requestId, errors.Wrap(err, "inserting request to db error").Error())
-		return echo.NewHTTPError(http.StatusServiceUnavailable, INTERNAL_SERVER_ERR)
+		logger.Error(requestId, errors.Wrap(err, "http inserting request to db error").Error())
+		return echo.NewHTTPError(http.StatusServiceUnavailable, httperrors.INTERNAL_SERVER_ERR)
 	}
 
 	upstreamResp, err := http.DefaultTransport.RoundTrip(ctx.Request())
 	if err != nil {
 		logger.Error(requestId, errors.Wrap(err, "round trip").Error())
-		return echo.NewHTTPError(http.StatusServiceUnavailable, INTERNAL_SERVER_ERR)
+		return echo.NewHTTPError(http.StatusServiceUnavailable, httperrors.INTERNAL_SERVER_ERR)
 	}
 	defer upstreamResp.Body.Close()
 
@@ -95,7 +99,7 @@ func (ps *ProxyServer) proxyHTTPHandler(ctx echo.Context) error {
 	ctx.Response().Status = upstreamResp.StatusCode
 	if _, err = io.Copy(ctx.Response(), upstreamResp.Body); err != nil {
 		logger.Error(requestId, errors.Wrap(err, "copy upstream's response to client").Error())
-		return echo.NewHTTPError(http.StatusInternalServerError, INTERNAL_SERVER_ERR)
+		return echo.NewHTTPError(http.StatusInternalServerError, httperrors.INTERNAL_SERVER_ERR)
 	}
 	var upsreamBody string
 	if b, err := io.ReadAll(upstreamResp.Body); err == nil {
@@ -105,32 +109,32 @@ func (ps *ProxyServer) proxyHTTPHandler(ctx echo.Context) error {
 	upstreamRepoResp := FormResponseData(upstreamResp, upsreamBody)
 	if upstreamResp == nil {
 		logger.Error(requestId, errors.Wrap(err, "form response error").Error())
-		return echo.NewHTTPError(http.StatusInternalServerError, INTERNAL_SERVER_ERR)
+		return echo.NewHTTPError(http.StatusInternalServerError, httperrors.INTERNAL_SERVER_ERR)
 	}
 
 	err = ps.repo.InsertResponse(repoReqID, upstreamRepoResp)
 	if err != nil {
-		logger.Error(requestId, errors.Wrap(err, "inserting response to db error").Error())
-		return echo.NewHTTPError(http.StatusInternalServerError, INTERNAL_SERVER_ERR)
+		logger.Error(requestId, errors.Wrap(err, "http inserting response to db error").Error())
+		return echo.NewHTTPError(http.StatusInternalServerError, httperrors.INTERNAL_SERVER_ERR)
 	}
 
 	return nil
 }
 
 func (ps *ProxyServer) proxyHTTPSHandler(ctx echo.Context) error {
-	logger := GetLoggerFromCtx(ctx)
-	requestId := GetRequestIdFromCtx(ctx)
+	logger := middleware.GetLoggerFromCtx(ctx)
+	requestId := middleware.GetRequestIdFromCtx(ctx)
 	name, _, _ := net.SplitHostPort(ctx.Request().Host)
 
 	if name == "" {
 		logger.Warn(requestId, "cannot determine cert name for"+ctx.Request().Host)
-		return echo.NewHTTPError(http.StatusServiceUnavailable, NO_UPSTREAM_ERR)
+		return echo.NewHTTPError(http.StatusServiceUnavailable, httperrors.NO_UPSTREAM_ERR)
 	}
 
 	provisionalCert, err := cert.GenCert(ps.CA, name)
 	if err != nil {
 		logger.Error(requestId, errors.Wrap(err, "generating leaf provisional cert").Error())
-		return echo.NewHTTPError(http.StatusInternalServerError, INTERNAL_SERVER_ERR)
+		return echo.NewHTTPError(http.StatusInternalServerError, httperrors.INTERNAL_SERVER_ERR)
 	}
 
 	serverConfig := tls.Config{}
@@ -197,11 +201,13 @@ func (ps *ProxyServer) proxyHTTPSHandler(ctx echo.Context) error {
 		return nil
 	}
 
-	repoReqID, err := ps.repo.InsertRequest(FormRequestData(request, requestByte))
+	repoReq := FormRequestData(request, requestByte)
+	repoReq.IsHTTPS = true
+	repoReqID, err := ps.repo.InsertRequest(repoReq)
 
 	if err != nil {
-		logger.Error(requestId, errors.Wrap(err, "inserting request to db error").Error())
-		return echo.NewHTTPError(http.StatusServiceUnavailable, INTERNAL_SERVER_ERR)
+		logger.Error(requestId, errors.Wrap(err, "https inserting request to db error").Error())
+		return nil
 	}
 
 	_, err = connToUpstream.Write(requestByte)
@@ -236,12 +242,12 @@ func (ps *ProxyServer) proxyHTTPSHandler(ctx echo.Context) error {
 	upstreamRepoResp := FormResponseData(response, upsreamRespBody)
 	if upstreamRepoResp == nil {
 		logger.Error(requestId, errors.Wrap(err, "form response error").Error())
-		return echo.NewHTTPError(http.StatusInternalServerError, INTERNAL_SERVER_ERR)
+		return nil
 	}
 
 	err = ps.repo.InsertResponse(repoReqID, upstreamRepoResp)
 	if err != nil {
-		logger.Error(requestId, errors.Wrap(err, "inserting response to db error").Error())
+		logger.Error(requestId, errors.Wrap(err, "https inserting response to db error").Error())
 		return nil
 	}
 

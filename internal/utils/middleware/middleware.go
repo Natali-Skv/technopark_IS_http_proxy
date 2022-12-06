@@ -1,4 +1,4 @@
-package proxyserver
+package middleware
 
 import (
 	"fmt"
@@ -20,8 +20,8 @@ type CommonMiddleware struct {
 	Logger *log.ServLogger
 }
 
-func NewCommonMiddleware(logger *log.ServLogger) CommonMiddleware {
-	return CommonMiddleware{
+func NewCommonMiddleware(logger *log.ServLogger) *CommonMiddleware {
+	return &CommonMiddleware{
 		Logger: logger,
 	}
 }

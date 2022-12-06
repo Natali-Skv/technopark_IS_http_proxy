@@ -32,6 +32,11 @@ func (p *Map) Scan(src interface{}) error {
 	return nil
 }
 
+type RequestResponse struct {
+	ID int64 `json:"id"`
+	Request
+}
+
 type Request struct {
 	Method     string `json:"method"`
 	Path       string `json:"path"`

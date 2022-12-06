@@ -2,14 +2,15 @@ package main
 
 import (
 	"crypto/tls"
-	"fmt"
 	"log"
 
 	"github.com/Natali-Skv/technopark_IS_http_proxy/config"
 	"github.com/Natali-Skv/technopark_IS_http_proxy/internal/cert"
 	proxyserver "github.com/Natali-Skv/technopark_IS_http_proxy/internal/proxyServer"
+	"github.com/Natali-Skv/technopark_IS_http_proxy/internal/repeater"
 	"github.com/Natali-Skv/technopark_IS_http_proxy/internal/tools/logger/zaplogger"
 	"github.com/Natali-Skv/technopark_IS_http_proxy/internal/tools/postgresql"
+	"github.com/Natali-Skv/technopark_IS_http_proxy/internal/utils/middleware"
 	"github.com/pkg/errors"
 
 	// postgresTool "github.com/Natali-Skv/technopark_IS_http_proxy/internal/tools/postgresql"
@@ -28,13 +29,10 @@ func main() {
 	if err := viper.Unmarshal(&servConf); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(servConf)
 	caCert, err := cert.LoadCA(servConf.Proxy.CaCrt, servConf.Proxy.CaKey, servConf.Proxy.CommonName)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// postgresTool.DBConn(servConf.DB)
 
 	logger, err := zaplogger.NewZapLogger(&servConf.Logger)
 	if err != nil {
@@ -55,8 +53,16 @@ func main() {
 	}
 	defer pgxManager.Close()
 
+	comonMw := middleware.NewCommonMiddleware(servLogger)
+
+	repeaterRepo := repeater.NewRepeaterRepository(pgxManager)
+	repeaterServer := repeater.NewRepeaterServer(repeaterRepo, caCert, &tls.Config{MinVersion: tls.VersionTLS12}, nil)
+
+	go func() {
+		repeaterServer.ListenAndServe(&servConf.Repeater, comonMw)
+	}()
+
 	proxyRepo := proxyserver.NewProxyRepository(pgxManager)
-	comonMw := proxyserver.NewCommonMiddleware(servLogger)
 
 	proxyServ := proxyserver.NewProxyServer(proxyRepo, caCert, &tls.Config{MinVersion: tls.VersionTLS12}, nil)
 	proxyServ.ListenAndServe(&servConf.Proxy, comonMw)
