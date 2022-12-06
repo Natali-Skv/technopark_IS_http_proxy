@@ -16,10 +16,7 @@ import (
 	"github.com/labstack/echo/v4"
 	echomw "github.com/labstack/echo/v4/middleware"
 	"github.com/pkg/errors"
-	// "github.com/labstack/echo-contrib/pprof"
 )
-
-// var okHeader = []byte("HTTP/1.1 200 OK\r\n\r\n")
 
 type RepeaterServer struct {
 	repo RepeaterRepository
@@ -42,7 +39,6 @@ func NewRepeaterServer(repo *RepeaterRepository, caCert *tls.Certificate, servCo
 
 func (rs *RepeaterServer) ListenAndServe(repeaterConf *config.ServerConfig, mw *middleware.CommonMiddleware) {
 	e := echo.New()
-	// pprof.Register(e)
 	e.Use(echomw.Recover(), mw.RequestIdMiddleware, mw.AccessLogMiddleware, mw.PanicMiddleware)
 
 	httpServ := http.Server{
@@ -96,9 +92,7 @@ func (rs *RepeaterServer) HandleRepeatRequest(ctx echo.Context) error {
 
 	host, ok := req.Headers["Host"].(string)
 	if !ok {
-		// TODO
-		logger.Error(requestId, errors.Wrap(err, "dial error").Error())
-		return echo.NewHTTPError(http.StatusInternalServerError, httperrors.INTERNAL_SERVER_ERR)
+		return echo.NewHTTPError(http.StatusBadRequest, httperrors.NO_UPSTREAM_ERR)
 	}
 
 	httpReq.Host = host
@@ -116,7 +110,7 @@ func (rs *RepeaterServer) HandleRepeatRequest(ctx echo.Context) error {
 		connToUpstream, err := tls.Dial("tcp", httpReq.Host, &clientConfig)
 		if err != nil {
 			logger.Error(requestId, errors.Wrap(err, "dial error").Error())
-			return echo.NewHTTPError(http.StatusInternalServerError, httperrors.INTERNAL_SERVER_ERR)
+			return echo.NewHTTPError(http.StatusServiceUnavailable, httperrors.UPSTREAM_UNAVAIBLE_ERR)
 		}
 		defer connToUpstream.Close()
 
@@ -132,10 +126,6 @@ func (rs *RepeaterServer) HandleRepeatRequest(ctx echo.Context) error {
 			logger.Error(requestId, errors.Wrap(err, "read response error").Error())
 			return nil
 		}
-
-		// соединение с сервером
-		// получить ответ
-		// отправить клиенту ответ
 
 	} else {
 		upstreamResp, err = http.DefaultTransport.RoundTrip(httpReq)

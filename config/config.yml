@@ -3,18 +3,18 @@ proxy:
   port: 8080
   readTimeout: 10
   writeTimeout: 10
-  caCrt: certs/caca1.crt
-  caKey: certs/caca1.key
-  commonName: proxy-ca-cert-cn1
+  caCrt: certs/repeater-proxy-ca.crt
+  caKey: certs/repeater-proxy-ca.key
+  commonName: repeater-proxy-cn
 
 repeater:
   host: 0.0.0.0
   port: 8000
   readTimeout: 10
   writeTimeout: 10
-  caCrt: certs/caca1.crt
-  caKey: certs/caca1.key
-  commonName: proxy-ca-cert-cn1
+  caCrt: certs/repeater-proxy-ca.crt
+  caKey: certs/repeater-proxy-ca.key
+  commonName: repeater-proxy-cn
 
 logger:
   level: debug
@@ -29,9 +29,9 @@ logger:
 # stacktraceKey = "stack_trace"
 
 db:
-  host: 0.0.0.0
+  host: 127.0.0.1
   port: 5432
   dbname: proxy
   username: user_proxy
-  password: 1111
+  password: password
   maxConnections: 1000

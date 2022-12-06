@@ -5,15 +5,14 @@ import (
 	"log"
 
 	"github.com/Natali-Skv/technopark_IS_http_proxy/config"
-	"github.com/Natali-Skv/technopark_IS_http_proxy/internal/cert"
 	proxyserver "github.com/Natali-Skv/technopark_IS_http_proxy/internal/proxyServer"
 	"github.com/Natali-Skv/technopark_IS_http_proxy/internal/repeater"
 	"github.com/Natali-Skv/technopark_IS_http_proxy/internal/tools/logger/zaplogger"
 	"github.com/Natali-Skv/technopark_IS_http_proxy/internal/tools/postgresql"
+	"github.com/Natali-Skv/technopark_IS_http_proxy/internal/utils/cert"
 	"github.com/Natali-Skv/technopark_IS_http_proxy/internal/utils/middleware"
 	"github.com/pkg/errors"
 
-	// postgresTool "github.com/Natali-Skv/technopark_IS_http_proxy/internal/tools/postgresql"
 	servLog "github.com/Natali-Skv/technopark_IS_http_proxy/internal/tools/logger"
 	"github.com/spf13/viper"
 )

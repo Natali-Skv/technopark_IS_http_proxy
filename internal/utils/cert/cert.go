@@ -9,7 +9,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
 	"math/big"
 	"os"
 	"time"
@@ -18,9 +17,10 @@ import (
 )
 
 const (
-	caMaxAge   = 5 * 365 * 24 * time.Hour
-	leafMaxAge = 24 * time.Hour
-	caUsage    = x509.KeyUsageDigitalSignature |
+	systemCADir = "/usr/local/share/ca-certificates"
+	caMaxAge    = 5 * 365 * 24 * time.Hour
+	leafMaxAge  = 24 * time.Hour
+	caUsage     = x509.KeyUsageDigitalSignature |
 		x509.KeyUsageContentCommitment |
 		x509.KeyUsageKeyEncipherment |
 		x509.KeyUsageDataEncipherment |
@@ -136,13 +136,14 @@ func genCA(certFile, keyFile, commonName string) (*tls.Certificate, error) {
 		return nil, errors.Wrap(err, "error parsing CA certificate from cert-PEM and key-PEM")
 	}
 
-	err = ioutil.WriteFile(certFile, certPEM, 0400)
+	err = os.WriteFile(certFile, certPEM, 0400)
 	if err != nil {
 		return nil, errors.Wrap(err, "error writing cert-PEM to file")
 	}
-	err = ioutil.WriteFile(keyFile, keyPEM, 0400)
+	err = os.WriteFile(keyFile, keyPEM, 0400)
 	if err != nil {
 		return nil, errors.Wrap(err, "error writing key-PEM to file")
 	}
+
 	return &caCert, err
 }

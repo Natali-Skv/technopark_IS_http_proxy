@@ -2,7 +2,7 @@ FROM golang:1.17 AS build
 
 ADD . /app
 WORKDIR /app
-RUN go build -o main ./cmd/main.go
+RUN go build cmd/main.go
 
 FROM ubuntu:20.04
 
@@ -27,15 +27,12 @@ USER root
 WORKDIR /usr/src/app
 
 COPY . .
-COPY --from=build /app/main .
+COPY --from=build /app/main/ .
 
 EXPOSE 8080
 EXPOSE 8000
 ENV PGPASSWORD password
 RUN apt-get install ca-certificates -y
-
-RUN mkdir -p certs
-ADD ca.crt /usr/local/share/ca-certificates/ca.crt
-RUN chmod 644 /usr/local/share/ca-certificates/ca.crt && update-ca-certificates
-# CMD service postgresql start && psql -h localhost -d proxy -U user_proxy -p 5432 -a -q -f ./db/db.sql && ./cmd/main
-ENTRYPOINT ./main
+RUN cp certs/repeater-proxy-ca.crt /usr/local/share/ca-certificates/
+RUN chmod 644 /usr/local/share/ca-certificates/repeater-proxy-ca.crt && update-ca-certificates
+CMD service postgresql start && psql -h localhost -d proxy -U user_proxy -p 5432 -a -q -f ./scripts/init_db.sql && ./main
